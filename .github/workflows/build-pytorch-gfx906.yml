@@ -1,0 +1,104 @@
+name: Build PyTorch GFX906
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: "Push image to GHCR"
+        required: true
+        type: boolean
+        default: true
+      rocm_version:
+        description: "ROCm version (must match existing rocm-gfx906 image tag)"
+        required: true
+        type: string
+        default: "6.3.4"
+      amdsmi_version:
+        description: "amdsmi PyPI version (use 6.3.3 when rocm is 6.3.4)"
+        required: false
+        type: string
+        default: "6.3.3"
+      pytorch_branch:
+        description: "PyTorch git tag/branch"
+        required: true
+        type: string
+        default: "v2.9.1"
+
+concurrency:
+  group: build-pytorch-gfx906-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      push_images: ${{ steps.vars.outputs.push_images }}
+      rocm_image_ref: ${{ steps.vars.outputs.rocm_image_ref }}
+      pytorch_image_ref: ${{ steps.vars.outputs.pytorch_image_ref }}
+    steps:
+      - name: Compute variables
+        id: vars
+        shell: bash
+        run: |
+          ROCM_VERSION="${{ inputs.rocm_version || '6.3.4' }}"
+          PYTORCH_BRANCH="${{ inputs.pytorch_branch || 'v2.9.1' }}"
+          PYTORCH_TAG="${PYTORCH_BRANCH#v}"
+          OWNER="${{ github.repository_owner }}"
+          {
+            echo "push_images=${{ inputs.push_images != false }}"
+            echo "rocm_image_ref=ghcr.io/${OWNER}/rocm-gfx906:${ROCM_VERSION}-complete"
+            echo "pytorch_image_ref=ghcr.io/${OWNER}/pytorch-gfx906:v${PYTORCH_TAG}-rocm-${ROCM_VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build-pytorch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: prepare
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache
+          sudo apt-get clean
+          docker system prune -af
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push PyTorch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./pytorch/submodules
+          file: ./pytorch/torch.Dockerfile
+          target: final
+          push: ${{ needs.prepare.outputs.push_images == 'true' }}
+          tags: ${{ needs.prepare.outputs.pytorch_image_ref }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          build-args: |
+            BASE_ROCM_IMAGE=${{ needs.prepare.outputs.rocm_image_ref }}
+            ROCM_ARCH=gfx906
+            AMDSMI_VERSION=${{ inputs.amdsmi_version || '6.3.3' }}
+            PYTORCH_BRANCH=${{ inputs.pytorch_branch || 'v2.9.1' }}
+          cache-from: |
+            type=gha,scope=pytorch-gfx906
+            type=registry,ref=${{ needs.prepare.outputs.pytorch_image_ref }}-cache
+          cache-to: |
+            type=gha,mode=max,scope=pytorch-gfx906

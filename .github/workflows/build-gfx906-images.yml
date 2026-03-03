@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: "6.3.3"
+      amdsmi_version:
+        description: "amdsmi PyPI version (empty = same as rocm_version; use 6.3.3 when rocm is 6.3.4)"
+        required: false
+        type: string
+        default: "6.3.3"
       pytorch_branch:
         description: "PyTorch git tag/branch"
         required: true
@@ -62,6 +67,7 @@ jobs:
       push_images: ${{ steps.vars.outputs.push_images }}
       rocm_version: ${{ steps.vars.outputs.rocm_version }}
       rocm_libs_version: ${{ steps.vars.outputs.rocm_libs_version }}
+      amdsmi_version: ${{ steps.vars.outputs.amdsmi_version }}
       base_rocm_image: ${{ steps.vars.outputs.base_rocm_image }}
       rocm_image_ref: ${{ steps.vars.outputs.rocm_image_ref }}
       pytorch_branch: ${{ steps.vars.outputs.pytorch_branch }}
@@ -85,6 +91,7 @@ jobs:
             echo "push_images=${{ inputs.push_images != false }}"
             echo "rocm_version=${ROCM_VERSION}"
             echo "rocm_libs_version=${{ inputs.rocm_libs_version || '6.3.3' }}"
+            echo "amdsmi_version=${{ inputs.amdsmi_version || '6.3.3' }}"
             echo "base_rocm_image=rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete"
             echo "rocm_image_ref=ghcr.io/${OWNER}/rocm-gfx906:${ROCM_VERSION}-complete"
             echo "pytorch_branch=${PYTORCH_BRANCH}"
@@ -193,6 +200,7 @@ jobs:
           build-args: |
             BASE_ROCM_IMAGE=${{ needs.prepare.outputs.rocm_image_ref }}
             ROCM_ARCH=gfx906
+            AMDSMI_VERSION=${{ needs.prepare.outputs.amdsmi_version }}
             PYTORCH_BRANCH=${{ needs.prepare.outputs.pytorch_branch }}
           cache-from: |
             type=gha,scope=pytorch-gfx906
@@ -246,6 +254,7 @@ jobs:
           provenance: false
           build-args: |
             BASE_PYTORCH_IMAGE=${{ needs.prepare.outputs.pytorch_image_ref }}
+            AMDSMI_VERSION=${{ needs.prepare.outputs.amdsmi_version }}
             VLLM_REPO=${{ needs.prepare.outputs.vllm_repo }}
             VLLM_BRANCH=${{ needs.prepare.outputs.vllm_branch }}
             TRITON_REPO=${{ needs.prepare.outputs.triton_repo }}
