@@ -13,6 +13,11 @@ on:
         required: true
         type: string
         default: "6.3.4"
+      rocm_libs_version:
+        description: "ROCm libs branch version for rocBLAS/Tensile/RCCL (empty = same as rocm_version)"
+        required: false
+        type: string
+        default: "6.3.3"
       pytorch_branch:
         description: "PyTorch git tag/branch"
         required: true
@@ -56,6 +61,7 @@ jobs:
     outputs:
       push_images: ${{ steps.vars.outputs.push_images }}
       rocm_version: ${{ steps.vars.outputs.rocm_version }}
+      rocm_libs_version: ${{ steps.vars.outputs.rocm_libs_version }}
       base_rocm_image: ${{ steps.vars.outputs.base_rocm_image }}
       rocm_image_ref: ${{ steps.vars.outputs.rocm_image_ref }}
       pytorch_branch: ${{ steps.vars.outputs.pytorch_branch }}
@@ -78,6 +84,7 @@ jobs:
           {
             echo "push_images=${{ inputs.push_images != false }}"
             echo "rocm_version=${ROCM_VERSION}"
+            echo "rocm_libs_version=${{ inputs.rocm_libs_version || '6.3.3' }}"
             echo "base_rocm_image=rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete"
             echo "rocm_image_ref=ghcr.io/${OWNER}/rocm-gfx906:${ROCM_VERSION}-complete"
             echo "pytorch_branch=${PYTORCH_BRANCH}"
@@ -133,6 +140,7 @@ jobs:
           build-args: |
             BASE_ROCM_IMAGE=${{ needs.prepare.outputs.base_rocm_image }}
             ROCM_ARCH=gfx906
+            ROCM_LIBS_VERSION=${{ needs.prepare.outputs.rocm_libs_version }}
           cache-from: |
             type=gha,scope=rocm-gfx906
             type=registry,ref=${{ needs.prepare.outputs.rocm_image_ref }}-cache

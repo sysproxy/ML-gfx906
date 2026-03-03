@@ -1,5 +1,6 @@
 ARG ROCM_ARCH="gfx906"
 ARG BASE_ROCM_IMAGE="rocm/dev-ubuntu-24.04:6.4.4-complete"
+ARG ROCM_LIBS_VERSION=""
 ARG ROCBLAS_REPO="https://github.com/ROCm/rocBLAS"
 ARG TENSILE_REPO="https://github.com/ROCm/Tensile"
 ARG RCCL_REPO="https://github.com/ROCm/rccl"
@@ -27,8 +28,10 @@ WORKDIR /rebuild-deps
 FROM build_base AS build_rocblas
 ARG ROCBLAS_REPO
 ARG TENSILE_REPO
-RUN git clone --depth 1 --branch rocm-$(cat /opt/ROCM_VERSION_FULL) ${ROCBLAS_REPO} rocBLAS && \
-    git clone --depth 1 --branch rocm-$(cat /opt/ROCM_VERSION_FULL) ${TENSILE_REPO} Tensile && \
+ARG ROCM_LIBS_VERSION
+RUN LIBS_VER="${ROCM_LIBS_VERSION:-$(cat /opt/ROCM_VERSION_FULL)}" && \
+    git clone --depth 1 --branch rocm-${LIBS_VER} ${ROCBLAS_REPO} rocBLAS && \
+    git clone --depth 1 --branch rocm-${LIBS_VER} ${TENSILE_REPO} Tensile && \
     true
 
 WORKDIR /rebuild-deps/rocBLAS
@@ -61,7 +64,9 @@ RUN cd ./build/release && \
 ############# Build rccl #############
 FROM build_base AS build_rccl
 ARG RCCL_REPO
-RUN git clone --depth 1 --branch rocm-$(cat /opt/ROCM_VERSION_FULL) ${RCCL_REPO} rccl && \
+ARG ROCM_LIBS_VERSION
+RUN LIBS_VER="${ROCM_LIBS_VERSION:-$(cat /opt/ROCM_VERSION_FULL)}" && \
+    git clone --depth 1 --branch rocm-${LIBS_VER} ${RCCL_REPO} rccl && \
     true
 
 WORKDIR /rebuild-deps/rccl
