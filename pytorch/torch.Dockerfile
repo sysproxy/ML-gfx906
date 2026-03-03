@@ -1,5 +1,6 @@
 ARG BASE_ROCM_IMAGE="docker.io/mixa3607/vllm-gfx906:latest"
 ARG ROCM_ARCH="gfx906"
+ARG AMDSMI_VERSION=""
 ARG PYTORCH_REPO="https://github.com/pytorch/pytorch.git"
 ARG PYTORCH_BRANCH="v2.7.1"
 ARG PYTORCH_VISION_REPO="https://github.com/pytorch/vision.git"
@@ -9,6 +10,7 @@ ARG PYTORCH_AUDIO_BRANCH=""
 
 ############# Base image #############
 FROM ${BASE_ROCM_IMAGE} AS rocm_base
+ARG AMDSMI_VERSION
 # Install basic utilities and Python 3.12
 RUN apt-get update && apt-get install -y software-properties-common git python3-pip && \
     add-apt-repository ppa:deadsnakes/ppa && \
@@ -19,7 +21,7 @@ RUN apt-get update && apt-get install -y software-properties-common git python3-
     update-alternatives --set python3 /usr/bin/python3.12 && \
     ln -sf /usr/bin/python3.12-config /usr/bin/python3-config && \
     python3 -m pip config set global.break-system-packages true && \
-    pip install amdsmi==$(cat /opt/ROCM_VERSION_FULL) && \
+    AMDSMI_VER="${AMDSMI_VERSION:-$(cat /opt/ROCM_VERSION_FULL)}" && pip install "amdsmi==${AMDSMI_VER}" && \
     true
 
 # Set environment variables

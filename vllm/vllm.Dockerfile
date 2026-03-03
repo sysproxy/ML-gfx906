@@ -1,4 +1,5 @@
 ARG BASE_PYTORCH_IMAGE="docker.io/mixa3607/pytorch-gfx906:v2.7.1-rocm-6.3.3"
+ARG AMDSMI_VERSION=""
 ARG VLLM_REPO="https://github.com/nlzy/vllm-gfx906.git"
 ARG VLLM_BRANCH="main"
 ARG TRITON_REPO="https://github.com/nlzy/triton-gfx906.git"
@@ -6,8 +7,8 @@ ARG TRITON_BRANCH="main"
 
 ############# Base image #############
 FROM ${BASE_PYTORCH_IMAGE} AS rocm_base
-# Install basic utilities and Python 3.12
-RUN pip install amdsmi==$(cat /opt/ROCM_VERSION_FULL)
+ARG AMDSMI_VERSION
+RUN AMDSMI_VER="${AMDSMI_VERSION:-$(cat /opt/ROCM_VERSION_FULL)}" && pip install "amdsmi==${AMDSMI_VER}"
 
 # Set environment variables
 ENV PYTORCH_ROCM_ARCH=$ROCM_ARCH
