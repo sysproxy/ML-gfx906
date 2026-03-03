@@ -1,0 +1,275 @@
+name: Build GFX906 Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: "Push images to GHCR"
+        required: true
+        type: boolean
+        default: true
+      rocm_version:
+        description: "ROCm version (base image tag)"
+        required: true
+        type: string
+        default: "6.3.4"
+      pytorch_branch:
+        description: "PyTorch git tag/branch"
+        required: true
+        type: string
+        default: "v2.9.1"
+      triton_repo:
+        description: "Triton repo URL"
+        required: true
+        type: string
+        default: "https://github.com/ai-infos/triton-gfx906.git"
+      triton_branch:
+        description: "Triton git tag/branch"
+        required: true
+        type: string
+        default: "v3.5.1+gfx906"
+      vllm_repo:
+        description: "vLLM repo URL"
+        required: true
+        type: string
+        default: "https://github.com/ai-infos/vllm-gfx906-mobydick.git"
+      vllm_branch:
+        description: "vLLM git tag/branch"
+        required: true
+        type: string
+        default: "main"
+
+concurrency:
+  group: build-gfx906-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ===========================================================
+  # Resolve inputs into outputs so dependent jobs can use them
+  # ===========================================================
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      push_images: ${{ steps.vars.outputs.push_images }}
+      rocm_version: ${{ steps.vars.outputs.rocm_version }}
+      base_rocm_image: ${{ steps.vars.outputs.base_rocm_image }}
+      rocm_image_ref: ${{ steps.vars.outputs.rocm_image_ref }}
+      pytorch_branch: ${{ steps.vars.outputs.pytorch_branch }}
+      pytorch_image_ref: ${{ steps.vars.outputs.pytorch_image_ref }}
+      triton_repo: ${{ steps.vars.outputs.triton_repo }}
+      triton_branch: ${{ steps.vars.outputs.triton_branch }}
+      vllm_repo: ${{ steps.vars.outputs.vllm_repo }}
+      vllm_branch: ${{ steps.vars.outputs.vllm_branch }}
+      vllm_image_ref: ${{ steps.vars.outputs.vllm_image_ref }}
+    steps:
+      - name: Compute variables
+        id: vars
+        shell: bash
+        run: |
+          ROCM_VERSION="${{ inputs.rocm_version || '6.3.4' }}"
+          PYTORCH_BRANCH="${{ inputs.pytorch_branch || 'v2.9.1' }}"
+          PYTORCH_TAG="${PYTORCH_BRANCH#v}"
+          OWNER="${{ github.repository_owner }}"
+
+          {
+            echo "push_images=${{ inputs.push_images != false }}"
+            echo "rocm_version=${ROCM_VERSION}"
+            echo "base_rocm_image=rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete"
+            echo "rocm_image_ref=ghcr.io/${OWNER}/rocm-gfx906:${ROCM_VERSION}-complete"
+            echo "pytorch_branch=${PYTORCH_BRANCH}"
+            echo "pytorch_image_ref=ghcr.io/${OWNER}/pytorch-gfx906:v${PYTORCH_TAG}-rocm-${ROCM_VERSION}"
+            echo "triton_repo=${{ inputs.triton_repo || 'https://github.com/ai-infos/triton-gfx906.git' }}"
+            echo "triton_branch=${{ inputs.triton_branch || 'v3.5.1+gfx906' }}"
+            echo "vllm_repo=${{ inputs.vllm_repo || 'https://github.com/ai-infos/vllm-gfx906-mobydick.git' }}"
+            echo "vllm_branch=${{ inputs.vllm_branch || 'main' }}"
+            echo "vllm_image_ref=ghcr.io/${OWNER}/vllm-gfx906:latest"
+          } >> "${GITHUB_OUTPUT}"
+
+  # ===========================================================
+  # Stage 1: ROCm base image (rebuild rocBLAS + RCCL for gfx906)
+  # ===========================================================
+  build-rocm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs: prepare
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache
+          sudo apt-get clean
+          docker system prune -af
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ROCm image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./rocm/submodules
+          file: ./rocm/rocm.Dockerfile
+          target: final
+          push: ${{ needs.prepare.outputs.push_images == 'true' }}
+          tags: ${{ needs.prepare.outputs.rocm_image_ref }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          build-args: |
+            BASE_ROCM_IMAGE=${{ needs.prepare.outputs.base_rocm_image }}
+            ROCM_ARCH=gfx906
+          cache-from: |
+            type=gha,scope=rocm-gfx906
+            type=registry,ref=${{ needs.prepare.outputs.rocm_image_ref }}-cache
+          cache-to: |
+            type=gha,mode=max,scope=rocm-gfx906
+
+  # ===========================================================
+  # Stage 2: PyTorch image (torch + torchvision + torchaudio)
+  # ===========================================================
+  build-pytorch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs:
+      - prepare
+      - build-rocm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache
+          sudo apt-get clean
+          docker system prune -af
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push PyTorch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./pytorch/submodules
+          file: ./pytorch/torch.Dockerfile
+          target: final
+          push: ${{ needs.prepare.outputs.push_images == 'true' }}
+          tags: ${{ needs.prepare.outputs.pytorch_image_ref }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          build-args: |
+            BASE_ROCM_IMAGE=${{ needs.prepare.outputs.rocm_image_ref }}
+            ROCM_ARCH=gfx906
+            PYTORCH_BRANCH=${{ needs.prepare.outputs.pytorch_branch }}
+          cache-from: |
+            type=gha,scope=pytorch-gfx906
+            type=registry,ref=${{ needs.prepare.outputs.pytorch_image_ref }}-cache
+          cache-to: |
+            type=gha,mode=max,scope=pytorch-gfx906
+
+  # ===========================================================
+  # Stage 3: vLLM image (Triton + vLLM)
+  # ===========================================================
+  build-vllm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    needs:
+      - prepare
+      - build-pytorch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache
+          sudo apt-get clean
+          docker system prune -af
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push vLLM image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./vllm/submodules
+          file: ./vllm/vllm.Dockerfile
+          target: final
+          push: ${{ needs.prepare.outputs.push_images == 'true' }}
+          tags: |
+            ${{ needs.prepare.outputs.vllm_image_ref }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          build-args: |
+            BASE_PYTORCH_IMAGE=${{ needs.prepare.outputs.pytorch_image_ref }}
+            VLLM_REPO=${{ needs.prepare.outputs.vllm_repo }}
+            VLLM_BRANCH=${{ needs.prepare.outputs.vllm_branch }}
+            TRITON_REPO=${{ needs.prepare.outputs.triton_repo }}
+            TRITON_BRANCH=${{ needs.prepare.outputs.triton_branch }}
+          cache-from: |
+            type=gha,scope=vllm-gfx906
+            type=registry,ref=${{ needs.prepare.outputs.vllm_image_ref }}-cache
+          cache-to: |
+            type=gha,mode=max,scope=vllm-gfx906
+
+  # ===========================================================
+  # Smoke test: verify the final image can import torch + vllm
+  # ===========================================================
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - prepare
+      - build-vllm
+    if: ${{ needs.prepare.outputs.push_images == 'true' }}
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke test vLLM image
+        run: |
+          IMAGE="${{ needs.prepare.outputs.vllm_image_ref }}"
+          echo "Testing image: ${IMAGE}"
+          docker pull "${IMAGE}"
+          docker run --rm --entrypoint python "${IMAGE}" -c \
+            "import torch, vllm; print('torch', torch.__version__); print('vllm', vllm.__version__)"

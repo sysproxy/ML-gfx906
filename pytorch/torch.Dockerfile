@@ -39,9 +39,10 @@ ARG PYTORCH_REPO
 ARG PYTORCH_BRANCH
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules --jobs 4 --branch "${PYTORCH_BRANCH}" "${PYTORCH_REPO}" .
 RUN pip install -r requirements.txt
-RUN sed -i 's|7e29c325d5bd33ba896ddb106f5d4fc7d715274dca7fe937f724fffa82017838|1e9b3dddf0c7fc07131c6f0f5266129e83ce2331f459fa2be8c63f4ae91b0f5b|g' cmake/External/aotriton.cmake && \
-    python3 tools/amd_build/build_amd.py && \
-    CMAKE_PREFIX_PATH=$(python3 -c 'import sys; print(sys.prefix)') python3 setup.py bdist_wheel --dist-dir=/dist && \
+RUN python3 tools/amd_build/build_amd.py
+ENV USE_ROCM=1
+RUN export CMAKE_PREFIX_PATH="$(python3 -c 'import sys; print(sys.prefix)')" && \
+    python3 setup.py bdist_wheel --dist-dir=/dist && \
     pip install /dist/*.whl
 
 ############# Build vision #############
